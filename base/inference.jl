@@ -3387,6 +3387,7 @@ function optimize(me::InferenceState)
         # and elide unnecessary allocations
         alloc_elim_pass!(me)
         getfield_elim_pass!(me)
+        copy_duplicated_expr_pass!(me)
         # Clean up for `alloc_elim_pass!` and `getfield_elim_pass!`
         void_use_elim_pass!(me)
         filter!(x -> x !== nothing, code)
@@ -6032,6 +6033,36 @@ function replace_getfield!(e::Expr, tupname, vals, field_names, sv::InferenceSta
             replace_getfield!(a, tupname, vals, field_names, sv)
         end
     end
+end
+
+function copy_expr_in_array!(ary, seen)
+    for i in 1:length(ary)
+        ex = ary[i]
+        isa(ex, Expr) || continue
+        ex = ex::Expr
+        if haskey(seen, ex)
+            newex = Expr(ex.head)
+            append!(newex.args, ex.args)
+            newex.typ = ex.typ
+            ary[i] = ex = newex
+            # No need to add to `seen`, there's no way there can be another one of the copied
+            # version in the AST....
+        else
+            seen[ex] = nothing
+            if haskey(seen, ex.args)
+                # Haven't actually seen this happen but it's pretty easy to check
+                ex.args = copy(ex.args)
+            else
+                seen[ex.args] = nothing
+            end
+        end
+        copy_expr_in_array!(ex.args, seen)
+    end
+end
+
+# Clone expressions that appears multiple times in the code
+function copy_duplicated_expr_pass!(sv::InferenceState)
+    copy_expr_in_array!(sv.src.code, ObjectIdDict())
 end
 
 # fix label numbers to always equal the statement index of the label
